@@ -1,163 +1,151 @@
 library(shiny)
 
-# Grade calculator Shiny app for the course
-
-MAX <- list(
-  pre = 44,
-  participation = 86,
-  hw = 15,    # per homework
-  hw_count = 13,
-  quiz = 25,  # per quiz
-  quiz_count = 13,
-  exams = c(200, 200) # Exam 1, Exam 2
-)
-
-total_points <- function() {
-  # Drop the smallest quiz in Unit A and Unit B (one each)
-  quiz_count_counted <- MAX$quiz_count - 2
-  MAX$pre + MAX$participation + (MAX$hw * MAX$hw_count) + (MAX$quiz * quiz_count_counted) + sum(MAX$exams)
-}
-
 # Letter grade cutoffs (out of 1000 total points)
-GRADE_CUTOFFS <- c(
-  "A" = 930,
-  "A-" = 900,
-  "B+" = 870,
-  "B" = 830,
-  "B-" = 800,
-  "C+" = 770,
-  "C" = 730,
-  "C-" = 700,
-  "D+" = 670,
-  "D" = 630,
-  "D-" = 600
+GRADE_CUTOFFS <- data.frame(
+  min_score = c(930, 900, 870, 830, 800, 770, 730, 700, 670, 630, 600, 0),
+  grade = c("A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"),
+  stringsAsFactors = FALSE
 )
 
-letter_grade <- function(points) {
-  ordered <- GRADE_CUTOFFS[order(-GRADE_CUTOFFS)]
-  idx <- which(points >= ordered)
-  if (length(idx) == 0) return("F")
-  names(ordered)[idx[1]]
+MAX_QUIZ <- 100
+MAX_HW <- 75
+MAX_HOMEWORK <- MAX_HW * 2
+MAX_EXAM_RAW <- 175
+MAX_EXAM <- 250
+MAX_PARTICIPATION <- 50
+N_PARTICIPATION <- 14
+PARTICIPATION_THRESHOLD <- 0.75
+EVAL_EXTRA_CREDIT <- 10
+
+numeric_to_letter <- function(total_score) {
+  idx <- which(total_score >= GRADE_CUTOFFS$min_score)[1]
+  GRADE_CUTOFFS$grade[idx]
 }
 
-clamp <- function(x, min = 0, max = Inf) {
-  x <- as.numeric(x)
-  if (is.na(x)) return(0)
-  pmin(pmax(x, min), max)
+participation_points <- function(completed) {
+  pct <- completed / N_PARTICIPATION
+  if (pct >= PARTICIPATION_THRESHOLD) {
+    MAX_PARTICIPATION
+  } else {
+    pct * MAX_PARTICIPATION
+  }
+}
+
+reweight_exam <- function(raw_score) {
+  raw_score * MAX_EXAM / MAX_EXAM_RAW
 }
 
 ui <- fluidPage(
-  titlePanel("Course Final Grade Calculator"),
+  titlePanel("STA235 Grade Calculator"),
   sidebarLayout(
-    sidebarPanel(width = 4,
-      numericInput("pre", "Pre-class Preparation (Perusall) (0-44):", value = 0, min = 0, max = MAX$pre, step = 1),
-      numericInput("part", "Class Participation (0-86):", value = 0, min = 0, max = MAX$participation, step = 1),
-      tags$hr(),
-      h4("Homeworks (15 pts each, 13 total)"),
-      wellPanel(
-        do.call(tagList, lapply(1:MAX$hw_count, function(i) {
-          numericInput(paste0("hw", i), paste0("HW ", i, " (0-", MAX$hw, ")"), value = 0, min = 0, max = MAX$hw, step = 1)
-        }))
+    sidebarPanel(
+      h4("Quizzes (100 pts each)"),
+      numericInput("quiz1", "Quiz 1", value = 0, min = 0, max = MAX_QUIZ, step = 0.5),
+      numericInput("quiz2", "Quiz 2", value = 0, min = 0, max = MAX_QUIZ, step = 0.5),
+      numericInput("quiz3", "Quiz 3", value = 0, min = 0, max = MAX_QUIZ, step = 0.5),
+      hr(),
+      h4("Homework (75 pts each, 150 total)"),
+      numericInput("hw1", "Homework 1", value = 0, min = 0, max = MAX_HW, step = 0.5),
+      numericInput("hw2", "Homework 2", value = 0, min = 0, max = MAX_HW, step = 0.5),
+      hr(),
+      h4("Exams (enter score out of 175; reweighted to 250 pts each)"),
+      numericInput("exam1", "Exam 1 (Unit A)", value = 0, min = 0, max = MAX_EXAM_RAW, step = 0.5),
+      numericInput("exam2", "Exam 2 (Unit B)", value = 0, min = 0, max = MAX_EXAM_RAW, step = 0.5),
+      hr(),
+      h4("Participation"),
+      sliderInput(
+        "participation_done",
+        paste0("Assignments completed (out of ", N_PARTICIPATION, ")"),
+        min = 0,
+        max = N_PARTICIPATION,
+        value = 0,
+        step = 1
       ),
-      tags$hr(),
-      h4(paste0("Checkpoint Quizzes (", MAX$quiz, " pts each, ", MAX$quiz_count, " total)")),
-      wellPanel(
-        h5("Unit A — Quizzes 1 to 7 (drop smallest)"),
-        do.call(tagList, lapply(1:7, function(i) {
-          numericInput(paste0("q", i), paste0("Quiz ", i, " (0-", MAX$quiz, ")"), value = 0, min = 0, max = MAX$quiz, step = 1)
-        })),
-        tags$hr(),
-        h5("Unit B — Quizzes 8 to 13 (drop smallest)"),
-        do.call(tagList, lapply(8:MAX$quiz_count, function(i) {
-          numericInput(paste0("q", i), paste0("Quiz ", i, " (0-", MAX$quiz, ")"), value = 0, min = 0, max = MAX$quiz, step = 1)
-        }))
+      helpText(
+        "Full 50 pts at >= 75% completion (11+ assignments). ",
+        "Below 75%, points = (completed / 14) x 50."
       ),
-      tags$hr(),
-      h4("Mastery Exams (Exam 1: 200 pts, Exam 2: 200 pts)"),
-      wellPanel(
-        do.call(tagList, lapply(seq_along(MAX$exams), function(i) {
-          numericInput(paste0("exam", i), paste0("Exam ", i, " (0-", MAX$exams[i], ")"), value = 0, min = 0, max = MAX$exams[i], step = 1)
-        }))
-      ),
-      tags$hr(),
-      actionButton("reset", "Reset all to 0")
+      hr(),
+      h4("Extra Credit"),
+      checkboxInput(
+        "eval_completed",
+        paste0("Completed professor's evaluation (+", EVAL_EXTRA_CREDIT, " pts)"),
+        value = FALSE
+      )
     ),
-
     mainPanel(
-      h3("Final Grade Summary"),
-      verbatimTextOutput("total_text"),
-      tags$hr(),
-      h4("Breakdown"),
-      tableOutput("breakdown"),
-      tags$hr(),
-      p("Total possible points: ", total_points()),
-      p("Observation: Quiz 13 is related to the Graded Practice exam from Fall 2025. If a student completed the extra credit assignment, they will receive an extra 10 points.")
+      h3("Your Grade"),
+      verbatimTextOutput("summary"),
+      hr(),
+      h4("Grade Scale (out of 1000)"),
+      tableOutput("grade_table")
     )
   )
 )
 
 server <- function(input, output, session) {
-  observeEvent(input$reset, {
-    updateNumericInput(session, "pre", value = 0)
-    updateNumericInput(session, "part", value = 0)
-    for (i in 1:MAX$hw_count) updateNumericInput(session, paste0("hw", i), value = 0)
-    for (i in 1:MAX$quiz_count) updateNumericInput(session, paste0("q", i), value = 0)
-    for (i in seq_along(MAX$exams)) updateNumericInput(session, paste0("exam", i), value = 0)
-  })
+  grades <- reactive({
+    quiz_pts <- input$quiz1 + input$quiz2 + input$quiz3
+    hw1_pts <- input$hw1
+    hw2_pts <- input$hw2
+    hw_pts <- hw1_pts + hw2_pts
+    exam1_pts <- reweight_exam(input$exam1)
+    exam2_pts <- reweight_exam(input$exam2)
+    exam_pts <- exam1_pts + exam2_pts
+    part_pct <- input$participation_done / N_PARTICIPATION
+    part_pts <- participation_points(input$participation_done)
+    ec_pts <- if (isTRUE(input$eval_completed)) EVAL_EXTRA_CREDIT else 0
+    total <- quiz_pts + hw_pts + exam_pts + part_pts + ec_pts
+    letter <- numeric_to_letter(total)
 
-  calc <- reactive({
-    pre <- clamp(input$pre, 0, MAX$pre)
-    part <- clamp(input$part, 0, MAX$participation)
-
-    hws <- sapply(1:MAX$hw_count, function(i) clamp(input[[paste0('hw', i)]], 0, MAX$hw))
-    quizzes <- sapply(1:MAX$quiz_count, function(i) clamp(input[[paste0('q', i)]], 0, MAX$quiz))
-    exams <- sapply(seq_along(MAX$exams), function(i) clamp(input[[paste0('exam', i)]], 0, MAX$exams[i]))
-
-    hw_total <- sum(hws)
-    exam_total <- sum(exams)
-
-    # Split quizzes into Unit A (1:7) and Unit B (8:MAX$quiz_count)
-    unitA_idx <- 1:7
-    unitB_idx <- 8:MAX$quiz_count
-    unitA <- quizzes[unitA_idx]
-    unitB <- quizzes[unitB_idx]
-
-    # Drop the smallest quiz in each unit
-    dropA <- if (length(unitA) > 0) min(unitA, na.rm = TRUE) else 0
-    dropB <- if (length(unitB) > 0) min(unitB, na.rm = TRUE) else 0
-    unitA_total <- sum(unitA, na.rm = TRUE) - dropA
-    unitB_total <- sum(unitB, na.rm = TRUE) - dropB
-
-    quiz_total <- unitA_total + unitB_total
-    # Possible quiz points after dropping one per unit
-    quiz_possible_total <- MAX$quiz * (MAX$quiz_count - 2)
-
-    raw_total <- pre + part + hw_total + quiz_total + exam_total
-    total <- min(raw_total, 1000)
-    pct <- (total / total_points()) * 100
-
-        list(pre = pre, part = part, hw_total = hw_total, hw_count = MAX$hw_count,
-          quiz_total = quiz_total, quiz_count = MAX$quiz_count,
-          quiz_count_counted = MAX$quiz_count - 2, quiz_possible_total = quiz_possible_total,
-          exam_total = exam_total, exam_count = length(MAX$exams),
-          raw_total = raw_total, total = total, pct = pct)
-  })
-
-  output$total_text <- renderText({
-    v <- calc()
-    lg <- letter_grade(v$total)
-    paste0("Total points earned: ", v$total, " / ", total_points(), " (", sprintf("%.2f", v$pct), "%) - Letter grade: ", lg)
-  })
-
-  output$breakdown <- renderTable({
-    v <- calc()
-    data.frame(
-      Category = c("Pre-class Preparation", "Class Participation", paste0("Homeworks (", v$hw_count, ")"), paste0("Quizzes (", v$quiz_count_counted, " counted of ", v$quiz_count, ")"), paste0("Mastery Exams (", v$exam_count, ")")),
-      Earned = c(v$pre, v$part, v$hw_total, v$quiz_total, v$exam_total),
-      Possible = c(MAX$pre, MAX$participation, MAX$hw * MAX$hw_count, v$quiz_possible_total, sum(MAX$exams)),
-      stringsAsFactors = FALSE
+    list(
+      quiz_pts = quiz_pts,
+      hw1_pts = hw1_pts,
+      hw2_pts = hw2_pts,
+      hw_pts = hw_pts,
+      exam1_raw = input$exam1,
+      exam2_raw = input$exam2,
+      exam1_pts = exam1_pts,
+      exam2_pts = exam2_pts,
+      exam_pts = exam_pts,
+      part_pct = part_pct,
+      part_pts = part_pts,
+      ec_pts = ec_pts,
+      total = total,
+      letter = letter
     )
-  }, digits = 2)
+  })
+
+  output$summary <- renderText({
+    g <- grades()
+    paste0(
+      "Quizzes:        ", sprintf("%6.1f", g$quiz_pts), " / 300\n",
+      "Homework 1:     ", sprintf("%6.1f", g$hw1_pts), " / 75\n",
+      "Homework 2:     ", sprintf("%6.1f", g$hw2_pts), " / 75\n",
+      "Homework total: ", sprintf("%6.1f", g$hw_pts), " / 150\n",
+      "Exam 1 (Unit A): ", sprintf("%6.1f", g$exam1_pts), " / 250",
+      "  (raw ", sprintf("%.1f", g$exam1_raw), " / ", MAX_EXAM_RAW, ")\n",
+      "Exam 2 (Unit B): ", sprintf("%6.1f", g$exam2_pts), " / 250",
+      "  (raw ", sprintf("%.1f", g$exam2_raw), " / ", MAX_EXAM_RAW, ")\n",
+      "Exams total:    ", sprintf("%6.1f", g$exam_pts), " / 500\n",
+      "Participation:  ", sprintf("%6.1f", g$part_pts), " / 50",
+      "  (", sprintf("%.0f%%", g$part_pct * 100), " completed)\n",
+      "Extra credit:   ", sprintf("%6.1f", g$ec_pts), " / ", EVAL_EXTRA_CREDIT,
+      "  (professor's evaluation)\n",
+      "--------------------------------\n",
+      "Total score:    ", sprintf("%6.1f", g$total), " / 1000",
+      if (g$ec_pts > 0) paste0(" (+ ", g$ec_pts, " EC)") else "", "\n",
+      "Letter grade:   ", g$letter, "\n"
+    )
+  })
+
+  output$grade_table <- renderTable({
+    data.frame(
+      Cutoff = GRADE_CUTOFFS$min_score[GRADE_CUTOFFS$grade != "F"],
+      Grade = GRADE_CUTOFFS$grade[GRADE_CUTOFFS$grade != "F"],
+      check.names = FALSE
+    )
+  }, bordered = TRUE, striped = TRUE)
 }
 
-shinyApp(ui, server)
+shinyApp(ui = ui, server = server)
